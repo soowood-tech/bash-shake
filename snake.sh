@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  BASH SNAKE - Classic Snake Game with AI Auto-Play in pure Bash
+#  BASH SNAKE - Classic Snake Game with 2:1 Aspect Ratio & AI Auto-Play
 # ==============================================================================
 
 # ANSI Color Palette
@@ -10,24 +10,27 @@ C_DIM="\033[2m"
 
 C_BORDER="\033[38;5;75m"      # Soft Sky Blue
 C_TITLE="\033[38;5;153m"     # Light Blue
-C_HEAD="\033[38;5;82m"       # Vibrant Green
-C_BODY="\033[38;5;35m"       # Snake Body Green
+C_HEAD="\033[38;5;118m"      # Vibrant Lime Green
+C_BODY="\033[38;5;40m"       # Solid Green
 C_FOOD="\033[38;5;196m"      # Bright Apple Red
 C_SCORE="\033[38;5;221m"     # Warm Gold
 C_BOT_ON="\033[38;5;208m"    # Orange (AI Active)
 C_BOT_OFF="\033[38;5;244m"   # Dim Gray
 C_MSG="\033[38;5;213m"       # Soft Magenta
 
-# Unicode Characters
-CHAR_HEAD="◉"
-CHAR_BODY="●"
-CHAR_FOOD="★"
-CHAR_BORDER_H="═"
-CHAR_BORDER_V="║"
-CHAR_CORNER_TL="╔"
-CHAR_CORNER_TR="╗"
-CHAR_CORNER_BL="╚"
-CHAR_CORNER_BR="╝"
+# Visual elements (Each grid cell is exactly 2 characters wide for 1:1 square ratio)
+CELL_HEAD="██"
+CELL_BODY="██"
+CELL_FOOD="██"
+CELL_EMPTY="  "
+
+# Border parts
+CHAR_H="═"
+CHAR_V="║"
+CHAR_TL="╔"
+CHAR_TR="╗"
+CHAR_BL="╚"
+CHAR_BR="╝"
 
 # Score storage
 SCORE_FILE="$HOME/.bash_snake_highscore"
@@ -45,7 +48,7 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM EXIT
 
-# Calculate board size & center offsets
+# Calculate grid dimensions to fit perfectly
 calc_dimensions() {
     local term_cols term_lines
     term_cols=$(tput cols 2>/dev/null || echo 80)
@@ -56,70 +59,85 @@ calc_dimensions() {
         exit 1
     fi
 
-    # Width: 46 columns (fits comfortably on small & split screens)
-    if (( term_cols > 50 )); then
-        WIDTH=46
+    # Number of logical grid cells
+    # Each cell is 2 chars wide on screen
+    # E.g., GRID_W = 22 -> 44 screen columns (+ 2 for borders = 46)
+    if (( term_cols >= 52 )); then
+        GRID_W=24
     else
-        WIDTH=$(( term_cols - 4 ))
+        GRID_W=$(( (term_cols - 4) / 2 ))
     fi
 
-    # Height: 15-18 rows
+    # Vertical grid cells
     if (( term_lines > 20 )); then
-        HEIGHT=17
+        GRID_H=16
     else
-        HEIGHT=$(( term_lines - 4 ))
+        GRID_H=$(( term_lines - 4 ))
     fi
 
-    # Horizontal center offset
-    OFFSET_X=$(( (term_cols - WIDTH) / 2 ))
-    if (( OFFSET_X < 0 )); then OFFSET_X=0; fi
+    SCREEN_WIDTH=$(( GRID_W * 2 + 2 ))
+    SCREEN_HEIGHT=$(( GRID_H + 2 ))
 
-    # Vertical offset
+    # Centering offsets
+    OFFSET_X=$(( (term_cols - SCREEN_WIDTH) / 2 ))
+    if (( OFFSET_X < 0 )); then OFFSET_X=0; fi
     OFFSET_Y=1
 }
 
-# Move cursor taking into account centered offsets
-move_to() {
-    local x=$(( $1 + OFFSET_X ))
-    local y=$(( $2 + OFFSET_Y ))
-    tput cup "$y" "$x"
+# Screen coordinates cursor move
+move_cursor() {
+    local scr_x=$(( $1 + OFFSET_X ))
+    local scr_y=$(( $2 + OFFSET_Y ))
+    tput cup "$scr_y" "$scr_x"
+}
+
+# Move to a logical grid cell (gx, gy)
+move_grid() {
+    local gx=$1
+    local gy=$2
+    # +1 for left border, each cell is 2 chars wide
+    local scr_x=$(( gx * 2 + 1 ))
+    # +1 for top border
+    local scr_y=$(( gy + 1 ))
+    move_cursor "$scr_x" "$scr_y"
 }
 
 draw_board() {
     clear
 
     # Top border with title
-    move_to 0 0
-    printf "${C_BORDER}${CHAR_CORNER_TL}"
+    move_cursor 0 0
+    printf "${C_BORDER}${CHAR_TL}"
     local title=" 🐍 BASH SNAKE "
     local title_len=${#title}
-    local side_len=$(( (WIDTH - 2 - title_len) / 2 ))
+    local border_inner=$(( SCREEN_WIDTH - 2 ))
+    local side_len=$(( (border_inner - title_len) / 2 ))
 
-    for ((x=0; x<side_len; x++)); do printf "${CHAR_BORDER_H}"; done
+    for ((x=0; x<side_len; x++)); do printf "${CHAR_H}"; done
     printf "${C_TITLE}${C_BOLD}%s${C_BORDER}" "$title"
-    for ((x=0; x<WIDTH - 2 - side_len - title_len; x++)); do printf "${CHAR_BORDER_H}"; done
-    printf "${CHAR_CORNER_TR}${C_RESET}"
+    for ((x=0; x<border_inner - side_len - title_len; x++)); do printf "${CHAR_H}"; done
+    printf "${CHAR_TR}${C_RESET}"
 
     # Side borders
-    for ((y=1; y<HEIGHT-1; y++)); do
-        move_to 0 $y
-        printf "${C_BORDER}${CHAR_BORDER_V}${C_RESET}"
-        move_to $((WIDTH - 1)) $y
-        printf "${C_BORDER}${CHAR_BORDER_V}${C_RESET}"
+    for ((y=1; y<=GRID_H; y++)); do
+        move_cursor 0 $y
+        printf "${C_BORDER}${CHAR_V}${C_RESET}"
+        move_cursor $(( SCREEN_WIDTH - 1 )) $y
+        printf "${C_BORDER}${CHAR_V}${C_RESET}"
     done
 
     # Bottom border
-    move_to 0 $((HEIGHT - 1))
-    printf "${C_BORDER}${CHAR_CORNER_BL}"
-    for ((x=1; x<WIDTH-1; x++)); do printf "${CHAR_BORDER_H}"; done
-    printf "${CHAR_CORNER_BR}${C_RESET}"
+    move_cursor 0 $(( SCREEN_HEIGHT - 1 ))
+    printf "${C_BORDER}${CHAR_BL}"
+    for ((x=0; x<border_inner; x++)); do printf "${CHAR_H}"; done
+    printf "${CHAR_BR}${C_RESET}"
 
     draw_ui
 }
 
 draw_ui() {
-    # Top info line
-    move_to 0 $((HEIGHT))
+    # Status line
+    move_cursor 0 $(( SCREEN_HEIGHT ))
     local mode_str="${C_BOT_OFF}[AUTO: OFF]${C_RESET}"
     if [[ $auto_mode -eq 1 ]]; then
         mode_str="${C_BOT_ON}${C_BOLD}[AUTO: ON]${C_RESET}"
@@ -128,15 +146,15 @@ draw_ui() {
     printf " ${C_SCORE}Score: ${C_BOLD}%-4d${C_RESET} │ ${C_SCORE}Record: ${C_BOLD}%-4d${C_RESET} │ %b" "$score" "$HIGHSCORE" "$mode_str"
 
     # Help footer
-    move_to 0 $((HEIGHT + 1))
-    printf " ${C_DIM}WASD/Arrows | TAB: Auto-Play | P: Pause | Q: Quit${C_RESET}"
+    move_cursor 0 $(( SCREEN_HEIGHT + 1 ))
+    printf " ${C_DIM}WASD/Arrows | TAB: Auto | +/-: Speed | P: Pause | Q: Quit${C_RESET}"
 }
 
 spawn_food() {
     local valid=0
     while [[ $valid -eq 0 ]]; do
-        food_x=$((RANDOM % (WIDTH - 2) + 1))
-        food_y=$((RANDOM % (HEIGHT - 2) + 1))
+        food_x=$((RANDOM % GRID_W))
+        food_y=$((RANDOM % GRID_H))
         valid=1
         for ((i=0; i<snake_len; i++)); do
             if [[ ${snake_x[i]} -eq $food_x && ${snake_y[i]} -eq $food_y ]]; then
@@ -149,26 +167,25 @@ spawn_food() {
 
 render_game() {
     # Render food
-    move_to "$food_x" "$food_y"
-    printf "${C_FOOD}${CHAR_FOOD}${C_RESET}"
+    move_grid "$food_x" "$food_y"
+    printf "${C_FOOD}${CELL_FOOD}${C_RESET}"
 
     # Render body
     for ((i=1; i<snake_len; i++)); do
-        move_to "${snake_x[i]}" "${snake_y[i]}"
-        printf "${C_BODY}${CHAR_BODY}${C_RESET}"
+        move_grid "${snake_x[i]}" "${snake_y[i]}"
+        printf "${C_BODY}${CELL_BODY}${C_RESET}"
     done
 
     # Render head
-    move_to "${snake_x[0]}" "${snake_y[0]}"
-    printf "${C_HEAD}${CHAR_HEAD}${C_RESET}"
+    move_grid "${snake_x[0]}" "${snake_y[0]}"
+    printf "${C_HEAD}${CELL_HEAD}${C_RESET}"
 }
 
-# AI decision algorithm (Auto-Play)
+# Smart pathfinding for Auto-Play mode
 ai_choose_direction() {
     local head_x=${snake_x[0]}
     local head_y=${snake_y[0]}
 
-    # Candidates: Up, Down, Left, Right
     local dirs_dx=(0 0 -1 1)
     local dirs_dy=(-1 1 0 0)
     local best_dx=$dir_x
@@ -176,12 +193,11 @@ ai_choose_direction() {
     local best_dist=99999
     local found_safe=0
 
-    # Test all 4 directions
     for d in 0 1 2 3; do
         local test_dx=${dirs_dx[d]}
         local test_dy=${dirs_dy[d]}
 
-        # Cannot reverse into itself
+        # Disallow reversing
         if [[ $test_dx -eq $(( -dir_x )) && $test_dy -eq $(( -dir_y )) && $snake_len -gt 1 ]]; then
             continue
         fi
@@ -189,29 +205,29 @@ ai_choose_direction() {
         local nx=$((head_x + test_dx))
         local ny=$((head_y + test_dy))
 
-        # Check wall collision
-        if [[ $nx -le 0 || $nx -ge $((WIDTH - 1)) || $ny -le 0 || $ny -ge $((HEIGHT - 1)) ]]; then
+        # Check bounds
+        if [[ $nx -lt 0 || $nx -ge GRID_W || $ny -lt 0 || $ny -ge GRID_H ]]; then
             continue
         fi
 
-        # Check snake body collision
-        local hits_body=0
+        # Check snake body
+        local hits=0
         for ((i=0; i<snake_len-1; i++)); do
             if [[ ${snake_x[i]} -eq $nx && ${snake_y[i]} -eq $ny ]]; then
-                hits_body=1
+                hits=1
                 break
             fi
         done
-        if [[ $hits_body -eq 1 ]]; then
+        if [[ $hits -eq 1 ]]; then
             continue
         fi
 
-        # Lookahead 1 step: does this cell have at least one valid continuation?
-        local valid_future=0
+        # 1-step lookahead for space
+        local open_neighbors=0
         for ld in 0 1 2 3; do
             local lnx=$((nx + dirs_dx[ld]))
             local lny=$((ny + dirs_dy[ld]))
-            if [[ $lnx -gt 0 && $lnx -lt $((WIDTH - 1)) && $lny -gt 0 && $lny -lt $((HEIGHT - 1)) ]]; then
+            if [[ $lnx -ge 0 && $lnx -lt GRID_W && $lny -ge 0 && $lny -lt GRID_H ]]; then
                 local lhits=0
                 for ((i=0; i<snake_len-2; i++)); do
                     if [[ ${snake_x[i]} -eq $lnx && ${snake_y[i]} -eq $lny ]]; then
@@ -220,22 +236,21 @@ ai_choose_direction() {
                     fi
                 done
                 if [[ $lhits -eq 0 ]]; then
-                    valid_future=1
-                    break
+                    open_neighbors=$((open_neighbors + 1))
                 fi
             fi
         done
 
-        # Manhattan distance to food
+        # Manhattan distance
         local dist_x=$((nx - food_x))
         if (( dist_x < 0 )); then dist_x=$(( -dist_x )); fi
         local dist_y=$((ny - food_y))
         if (( dist_y < 0 )); then dist_y=$(( -dist_y )); fi
         local dist=$((dist_x + dist_y))
 
-        # Penalty if it leads to a dead end
-        if [[ $valid_future -eq 0 && $snake_len -gt 4 ]]; then
-            dist=$((dist + 100))
+        # Avoid dead ends
+        if [[ $open_neighbors -eq 0 && $snake_len -gt 3 ]]; then
+            dist=$((dist + 200))
         fi
 
         if [[ $dist -lt $best_dist ]]; then
@@ -256,7 +271,6 @@ read_input() {
     local key=""
     local extra=""
 
-    # Read input with timeout = speed (IFS= ensures spaces and tabs are preserved)
     IFS= read -rsn1 -t "$speed" key
 
     if [[ "$key" == $'\e' ]]; then
@@ -285,13 +299,13 @@ read_input() {
             auto_mode=0
             if [[ $dir_x -ne -1 ]]; then dir_x=1; dir_y=0; started=1; fi
             draw_ui ;;
-        # Toggle Auto-Play (TAB, T, or B for Bot)
+        # Toggle Auto-Play (TAB, T, or B)
         $'\t'|[tTеЕ]|[bBиИ])
             auto_mode=$((1 - auto_mode))
             started=1
             draw_ui
             ;;
-        # Speed adjustment (+ / -)
+        # Adjust Speed
         "+"|"=")
             speed=$(awk "BEGIN {s=$speed - 0.02; if (s < 0.05) s=0.05; print s}") ;;
         "-"|"_")
@@ -301,7 +315,7 @@ read_input() {
             if [[ $started -eq 1 ]]; then
                 paused=$((1 - paused))
                 if [[ $paused -eq 1 ]]; then
-                    move_to $((WIDTH / 2 - 5)) $((HEIGHT / 2))
+                    move_cursor $(( (SCREEN_WIDTH - 12) / 2 )) $(( SCREEN_HEIGHT / 2 ))
                     printf "${C_MSG}${C_BOLD}[ PAUSED ]${C_RESET}"
                 else
                     draw_board
@@ -319,7 +333,6 @@ update_state() {
         return
     fi
 
-    # If AI auto-play is enabled, calculate next move
     if [[ $auto_mode -eq 1 ]]; then
         ai_choose_direction
     fi
@@ -327,13 +340,13 @@ update_state() {
     local new_x=$((snake_x[0] + dir_x))
     local new_y=$((snake_y[0] + dir_y))
 
-    # Check wall collision
-    if [[ $new_x -le 0 || $new_x -ge $((WIDTH - 1)) || $new_y -le 0 || $new_y -ge $((HEIGHT - 1)) ]]; then
+    # Wall collision
+    if [[ $new_x -lt 0 || $new_x -ge GRID_W || $new_y -lt 0 || $new_y -ge GRID_H ]]; then
         game_over=1
         return
     fi
 
-    # Check self collision
+    # Self collision
     for ((i=0; i<snake_len; i++)); do
         if [[ ${snake_x[i]} -eq $new_x && ${snake_y[i]} -eq $new_y ]]; then
             game_over=1
@@ -348,14 +361,14 @@ update_state() {
         spawn_food
         draw_ui
     else
-        # Clear old tail
+        # Erase previous tail cell
         local tail_x=${snake_x[snake_len-1]}
         local tail_y=${snake_y[snake_len-1]}
-        move_to "$tail_x" "$tail_y"
-        printf " "
+        move_grid "$tail_x" "$tail_y"
+        printf "${CELL_EMPTY}"
     fi
 
-    # Advance body
+    # Advance body array
     for ((i=snake_len-1; i>0; i--)); do
         snake_x[i]=${snake_x[i-1]}
         snake_y[i]=${snake_y[i-1]}
@@ -368,15 +381,15 @@ update_state() {
 init_game() {
     calc_dimensions
     score=0
-    # Balanced comfortable default speed: 0.16s
-    speed=0.16
+    # Balanced default speed
+    speed=0.14
     paused=0
     game_over=0
     started=0
     auto_mode=0
 
-    local start_x=$((WIDTH / 2))
-    local start_y=$((HEIGHT / 2))
+    local start_x=$((GRID_W / 2))
+    local start_y=$((GRID_H / 2))
 
     snake_x=($start_x $((start_x - 1)) $((start_x - 2)))
     snake_y=($start_y $start_y $start_y)
@@ -389,12 +402,11 @@ init_game() {
     draw_board
 
     # Start hint
-    move_to $((WIDTH / 2 - 13)) $((HEIGHT / 2 - 2))
+    move_cursor $(( (SCREEN_WIDTH - 24) / 2 )) $(( SCREEN_HEIGHT / 2 - 1 ))
     printf "${C_TITLE}${C_BOLD}Press WASD or TAB (Auto)${C_RESET}"
 }
 
 main() {
-    # Enter full screen alternate buffer
     tput smcup 2>/dev/null
     tput civis 2>/dev/null
     stty -echo 2>/dev/null
@@ -406,28 +418,31 @@ main() {
             read_input
             update_state
 
-            # Clear start hint
+            # Clear hint once game starts
             if [[ $started -eq 1 && $snake_len -eq 3 && $score -eq 0 ]]; then
-                move_to $((WIDTH / 2 - 13)) $((HEIGHT / 2 - 2))
-                printf "                           "
+                move_cursor $(( (SCREEN_WIDTH - 24) / 2 )) $(( SCREEN_HEIGHT / 2 - 1 ))
+                printf "                        "
             fi
         done
 
-        # Save high score
+        # Update high score
         if [[ $score -gt $HIGHSCORE ]]; then
             HIGHSCORE=$score
             echo "$HIGHSCORE" > "$SCORE_FILE"
         fi
 
         # Game Over Screen
-        move_to $((WIDTH / 2 - 7)) $((HEIGHT / 2 - 1))
+        local box_x=$(( (SCREEN_WIDTH - 16) / 2 ))
+        local box_y=$(( SCREEN_HEIGHT / 2 - 1 ))
+
+        move_cursor $box_x $box_y
         printf "${C_FOOD}${C_BOLD}╔══════════════╗${C_RESET}"
-        move_to $((WIDTH / 2 - 7)) $((HEIGHT / 2))
+        move_cursor $box_x $((box_y + 1))
         printf "${C_FOOD}${C_BOLD}║  GAME OVER!  ║${C_RESET}"
-        move_to $((WIDTH / 2 - 7)) $((HEIGHT / 2 + 1))
+        move_cursor $box_x $((box_y + 2))
         printf "${C_FOOD}${C_BOLD}╚══════════════╝${C_RESET}"
 
-        move_to $((WIDTH / 2 - 11)) $((HEIGHT / 2 + 3))
+        move_cursor $(( (SCREEN_WIDTH - 30) / 2 )) $((box_y + 4))
         printf "${C_SCORE}Press [R] to Retry, [Q] to Quit${C_RESET}"
 
         while true; do
