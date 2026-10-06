@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  BASH SNAKE - Classic Snake Game with 2:1 Aspect Ratio & AI Auto-Play
+#  BASH SNAKE - Classic Snake Game with Advanced AI & Auto-Restart in pure Bash
 # ==============================================================================
 
 # ANSI Color Palette
@@ -18,7 +18,7 @@ C_BOT_ON="\033[38;5;208m"    # Orange (AI Active)
 C_BOT_OFF="\033[38;5;244m"   # Dim Gray
 C_MSG="\033[38;5;213m"       # Soft Magenta
 
-# Visual elements (Each grid cell is exactly 2 characters wide for 1:1 square ratio)
+# Visual elements (Each grid cell is 2 characters wide for 1:1 aspect ratio)
 CELL_HEAD="██"
 CELL_BODY="██"
 CELL_FOOD="██"
@@ -32,7 +32,6 @@ CHAR_TR="╗"
 CHAR_BL="╚"
 CHAR_BR="╝"
 
-# Score storage
 SCORE_FILE="$HOME/.bash_snake_highscore"
 HIGHSCORE=0
 if [[ -f "$SCORE_FILE" ]]; then
@@ -48,7 +47,6 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM EXIT
 
-# Calculate grid dimensions to fit perfectly
 calc_dimensions() {
     local term_cols term_lines
     term_cols=$(tput cols 2>/dev/null || echo 80)
@@ -59,16 +57,12 @@ calc_dimensions() {
         exit 1
     fi
 
-    # Number of logical grid cells
-    # Each cell is 2 chars wide on screen
-    # E.g., GRID_W = 22 -> 44 screen columns (+ 2 for borders = 46)
     if (( term_cols >= 52 )); then
         GRID_W=24
     else
         GRID_W=$(( (term_cols - 4) / 2 ))
     fi
 
-    # Vertical grid cells
     if (( term_lines > 20 )); then
         GRID_H=16
     else
@@ -78,26 +72,21 @@ calc_dimensions() {
     SCREEN_WIDTH=$(( GRID_W * 2 + 2 ))
     SCREEN_HEIGHT=$(( GRID_H + 2 ))
 
-    # Centering offsets
     OFFSET_X=$(( (term_cols - SCREEN_WIDTH) / 2 ))
     if (( OFFSET_X < 0 )); then OFFSET_X=0; fi
     OFFSET_Y=1
 }
 
-# Screen coordinates cursor move
 move_cursor() {
     local scr_x=$(( $1 + OFFSET_X ))
     local scr_y=$(( $2 + OFFSET_Y ))
     tput cup "$scr_y" "$scr_x"
 }
 
-# Move to a logical grid cell (gx, gy)
 move_grid() {
     local gx=$1
     local gy=$2
-    # +1 for left border, each cell is 2 chars wide
     local scr_x=$(( gx * 2 + 1 ))
-    # +1 for top border
     local scr_y=$(( gy + 1 ))
     move_cursor "$scr_x" "$scr_y"
 }
@@ -136,7 +125,6 @@ draw_board() {
 }
 
 draw_ui() {
-    # Status line
     move_cursor 0 $(( SCREEN_HEIGHT ))
     local mode_str="${C_BOT_OFF}[AUTO: OFF]${C_RESET}"
     if [[ $auto_mode -eq 1 ]]; then
@@ -145,7 +133,6 @@ draw_ui() {
 
     printf " ${C_SCORE}Score: ${C_BOLD}%-4d${C_RESET} │ ${C_SCORE}Record: ${C_BOLD}%-4d${C_RESET} │ %b" "$score" "$HIGHSCORE" "$mode_str"
 
-    # Help footer
     move_cursor 0 $(( SCREEN_HEIGHT + 1 ))
     printf " ${C_DIM}WASD/Arrows | TAB: Auto | +/-: Speed | P: Pause | Q: Quit${C_RESET}"
 }
@@ -166,38 +153,40 @@ spawn_food() {
 }
 
 render_game() {
-    # Render food
+    # Food
     move_grid "$food_x" "$food_y"
     printf "${C_FOOD}${CELL_FOOD}${C_RESET}"
 
-    # Render body
+    # Body
     for ((i=1; i<snake_len; i++)); do
         move_grid "${snake_x[i]}" "${snake_y[i]}"
         printf "${C_BODY}${CELL_BODY}${C_RESET}"
     done
 
-    # Render head
+    # Head
     move_grid "${snake_x[0]}" "${snake_y[0]}"
     printf "${C_HEAD}${CELL_HEAD}${C_RESET}"
 }
 
-# Smart pathfinding for Auto-Play mode
+# Advanced AI with Breadth Space Scoring & Tail Tracking
 ai_choose_direction() {
     local head_x=${snake_x[0]}
     local head_y=${snake_y[0]}
+    local tail_x=${snake_x[snake_len-1]}
+    local tail_y=${snake_y[snake_len-1]}
 
     local dirs_dx=(0 0 -1 1)
     local dirs_dy=(-1 1 0 0)
     local best_dx=$dir_x
     local best_dy=$dir_y
-    local best_dist=99999
+    local best_score=-999999
     local found_safe=0
 
     for d in 0 1 2 3; do
         local test_dx=${dirs_dx[d]}
         local test_dy=${dirs_dy[d]}
 
-        # Disallow reversing
+        # Disallow 180 reverse
         if [[ $test_dx -eq $(( -dir_x )) && $test_dy -eq $(( -dir_y )) && $snake_len -gt 1 ]]; then
             continue
         fi
@@ -222,8 +211,8 @@ ai_choose_direction() {
             continue
         fi
 
-        # 1-step lookahead for space
-        local open_neighbors=0
+        # 2-step open space scan
+        local open_space=0
         for ld in 0 1 2 3; do
             local lnx=$((nx + dirs_dx[ld]))
             local lny=$((ny + dirs_dy[ld]))
@@ -236,25 +225,36 @@ ai_choose_direction() {
                     fi
                 done
                 if [[ $lhits -eq 0 ]]; then
-                    open_neighbors=$((open_neighbors + 1))
+                    open_space=$((open_space + 1))
                 fi
             fi
         done
 
-        # Manhattan distance
+        # Distance to food
         local dist_x=$((nx - food_x))
         if (( dist_x < 0 )); then dist_x=$(( -dist_x )); fi
         local dist_y=$((ny - food_y))
         if (( dist_y < 0 )); then dist_y=$(( -dist_y )); fi
-        local dist=$((dist_x + dist_y))
+        local dist_food=$((dist_x + dist_y))
 
-        # Avoid dead ends
-        if [[ $open_neighbors -eq 0 && $snake_len -gt 3 ]]; then
-            dist=$((dist + 200))
+        # Distance to tail (safety anchor)
+        local t_dx=$((nx - tail_x))
+        if (( t_dx < 0 )); then t_dx=$(( -t_dx )); fi
+        local t_dy=$((ny - tail_y))
+        if (( t_dy < 0 )); then t_dy=$(( -t_dy )); fi
+        local dist_tail=$((t_dx + t_dy))
+
+        # Evaluate move utility:
+        # High score for open space, high reward for closer food, moderate reward for tail reachability
+        local move_eval=$(( (4 - dist_food) * 20 + open_space * 150 - dist_tail * 2 ))
+
+        # Heavy penalty if entering a dead end
+        if [[ $open_space -eq 0 && $snake_len -gt 3 ]]; then
+            move_eval=$((move_eval - 5000))
         fi
 
-        if [[ $dist -lt $best_dist ]]; then
-            best_dist=$dist
+        if [[ $move_eval -gt $best_score ]]; then
+            best_score=$move_eval
             best_dx=$test_dx
             best_dy=$test_dy
             found_safe=1
@@ -279,38 +279,31 @@ read_input() {
     fi
 
     case "$key" in
-        # Up
         [wWцЦ]|$'\e[A'|$'\eOA')
             auto_mode=0
             if [[ $dir_y -ne 1 ]]; then dir_x=0; dir_y=-1; started=1; fi
             draw_ui ;;
-        # Down
         [sSыЫ]|$'\e[B'|$'\eOB')
             auto_mode=0
             if [[ $dir_y -ne -1 ]]; then dir_x=0; dir_y=1; started=1; fi
             draw_ui ;;
-        # Left
         [aAфФ]|$'\e[D'|$'\eOD')
             auto_mode=0
             if [[ $dir_x -ne 1 ]]; then dir_x=-1; dir_y=0; started=1; fi
             draw_ui ;;
-        # Right
         [dDвВ]|$'\e[C'|$'\eOC')
             auto_mode=0
             if [[ $dir_x -ne -1 ]]; then dir_x=1; dir_y=0; started=1; fi
             draw_ui ;;
-        # Toggle Auto-Play (TAB, T, or B)
         $'\t'|[tTеЕ]|[bBиИ])
             auto_mode=$((1 - auto_mode))
             started=1
             draw_ui
             ;;
-        # Adjust Speed
         "+"|"=")
             speed=$(awk "BEGIN {s=$speed - 0.02; if (s < 0.05) s=0.05; print s}") ;;
         "-"|"_")
             speed=$(awk "BEGIN {s=$speed + 0.02; if (s > 0.35) s=0.35; print s}") ;;
-        # Pause
         " "|[pPзЗ])
             if [[ $started -eq 1 ]]; then
                 paused=$((1 - paused))
@@ -322,7 +315,6 @@ read_input() {
                 fi
             fi
             ;;
-        # Quit
         [qQйЙ])
             cleanup ;;
     esac
@@ -361,14 +353,12 @@ update_state() {
         spawn_food
         draw_ui
     else
-        # Erase previous tail cell
         local tail_x=${snake_x[snake_len-1]}
         local tail_y=${snake_y[snake_len-1]}
         move_grid "$tail_x" "$tail_y"
         printf "${CELL_EMPTY}"
     fi
 
-    # Advance body array
     for ((i=snake_len-1; i>0; i--)); do
         snake_x[i]=${snake_x[i-1]}
         snake_y[i]=${snake_y[i-1]}
@@ -379,14 +369,18 @@ update_state() {
 }
 
 init_game() {
+    local keep_auto=${1:-0}
     calc_dimensions
     score=0
-    # Balanced default speed
     speed=0.14
     paused=0
     game_over=0
-    started=0
-    auto_mode=0
+    auto_mode=$keep_auto
+    if [[ $auto_mode -eq 1 ]]; then
+        started=1
+    else
+        started=0
+    fi
 
     local start_x=$((GRID_W / 2))
     local start_y=$((GRID_H / 2))
@@ -401,9 +395,10 @@ init_game() {
     spawn_food
     draw_board
 
-    # Start hint
-    move_cursor $(( (SCREEN_WIDTH - 24) / 2 )) $(( SCREEN_HEIGHT / 2 - 1 ))
-    printf "${C_TITLE}${C_BOLD}Press WASD or TAB (Auto)${C_RESET}"
+    if [[ $started -eq 0 ]]; then
+        move_cursor $(( (SCREEN_WIDTH - 24) / 2 )) $(( SCREEN_HEIGHT / 2 - 1 ))
+        printf "${C_TITLE}${C_BOLD}Press WASD or TAB (Auto)${C_RESET}"
+    fi
 }
 
 main() {
@@ -412,26 +407,37 @@ main() {
     stty -echo 2>/dev/null
 
     while true; do
-        init_game
+        init_game ${auto_mode:-0}
         while [[ $game_over -eq 0 ]]; do
             render_game
             read_input
             update_state
 
-            # Clear hint once game starts
-            if [[ $started -eq 1 && $snake_len -eq 3 && $score -eq 0 ]]; then
+            if [[ $started -eq 1 && $snake_len -eq 3 && $score -eq 0 && $auto_mode -eq 0 ]]; then
                 move_cursor $(( (SCREEN_WIDTH - 24) / 2 )) $(( SCREEN_HEIGHT / 2 - 1 ))
                 printf "                        "
             fi
         done
 
-        # Update high score
         if [[ $score -gt $HIGHSCORE ]]; then
             HIGHSCORE=$score
             echo "$HIGHSCORE" > "$SCORE_FILE"
         fi
 
-        # Game Over Screen
+        # If AI auto-play mode was active: auto restart
+        if [[ $auto_mode -eq 1 ]]; then
+            local box_x=$(( (SCREEN_WIDTH - 24) / 2 ))
+            local box_y=$(( SCREEN_HEIGHT / 2 - 1 ))
+            move_cursor $box_x $box_y
+            printf "${C_BOT_ON}${C_BOLD}🤖 AI OVER! Restarting in 1s...${C_RESET}"
+            for ((w=0; w<10; w++)); do
+                IFS= read -rsn1 -t 0.1 k
+                if [[ "$k" =~ [qQйЙ] ]]; then cleanup; fi
+            done
+            continue
+        fi
+
+        # Human Game Over Screen
         local box_x=$(( (SCREEN_WIDTH - 16) / 2 ))
         local box_y=$(( SCREEN_HEIGHT / 2 - 1 ))
 
