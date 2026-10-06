@@ -3,20 +3,17 @@
 #  BASH SNAKE - Classic Snake Game written in pure Bash
 # ==============================================================================
 
-# Terminal dimensions for the game board
-WIDTH=40
-HEIGHT=20
-
-# Colors (ANSI escape codes)
+# ANSI Colors
 C_RESET="\033[0m"
 C_BOLD="\033[1m"
+C_DIM="\033[2m"
 C_BORDER="\033[38;5;39m"    # Cyan
 C_HEAD="\033[38;5;46m"      # Bright green
 C_BODY="\033[38;5;34m"      # Forest green
 C_FOOD="\033[38;5;196m"     # Bright red
 C_SCORE="\033[38;5;220m"    # Gold
 C_MSG="\033[38;5;213m"      # Pink
-C_DIM="\033[2m"
+C_INFO="\033[38;5;51m"      # Cyan info
 
 # Symbols
 CHAR_HEAD="◉"
@@ -38,58 +35,49 @@ fi
 
 # Cleanup and restore terminal on exit
 cleanup() {
-    tput cnorm      # Show cursor
-    stty echo       # Restore echo
-    tput rmcup      # Restore screen
+    tput cnorm 2>/dev/null      # Show cursor
+    stty echo 2>/dev/null       # Restore echo
+    tput rmcup 2>/dev/null      # Restore screen
     printf "${C_RESET}\n"
     exit 0
 }
+
+calc_dimensions() {
+    local term_cols
+    local term_lines
+    term_cols=$(tput cols 2>/dev/null || echo 80)
+    term_lines=$(tput lines 2>/dev/null || echo 24)
+
+    if (( term_cols < 30 || term_lines < 10 )); then
+        echo "Terminal too small ($term_cols x $term_lines)! Please resize to at least 30x10."
+        exit 1
+    fi
+
+    # Width: fit nicely (max 50, but at least leave 2 margin cols)
+    if (( term_cols > 54 )); then
+        WIDTH=50
+    else
+        WIDTH=$(( term_cols - 4 ))
+    fi
+
+    # Height: leave 3 lines for status and margins
+    HEIGHT=$(( term_lines - 3 ))
+    if (( HEIGHT > 22 )); then
+        HEIGHT=20
+    fi
+}
+
+calc_dimensions
+
+# Catch exit signals
 trap cleanup SIGINT SIGTERM EXIT
 
-# Setup terminal
-stty -echo
-tput smcup          # Use alternate buffer
-tput civis          # Hide cursor
+# Enter full screen alternate buffer
+tput smcup 2>/dev/null
+tput civis 2>/dev/null
+stty -echo 2>/dev/null
 
-# Game state
-init_game() {
-    score=0
-    speed=0.10
-    paused=0
-    game_over=0
-
-    # Start position: center
-    local start_x=$((WIDTH / 2))
-    local start_y=$((HEIGHT / 2))
-
-    snake_x=($start_x $((start_x - 1)) $((start_x - 2)))
-    snake_y=($start_y $start_y $start_y)
-    snake_len=3
-
-    # Initial direction: right
-    dir_x=1
-    dir_y=0
-
-    spawn_food
-    draw_board
-}
-
-spawn_food() {
-    local valid=0
-    while [[ $valid -eq 0 ]]; do
-        food_x=$((RANDOM % (WIDTH - 2) + 1))
-        food_y=$((RANDOM % (HEIGHT - 2) + 1))
-        valid=1
-        for ((i=0; i<snake_len; i++)); do
-            if [[ ${snake_x[i]} -eq $food_x && ${snake_y[i]} -eq $food_y ]]; then
-                valid=0
-                break
-            fi
-        done
-    done
-}
-
-# Move cursor helper
+# Move cursor helper: row (Y), col (X)
 move_to() {
     tput cup "$2" "$1"
 }
@@ -116,9 +104,24 @@ draw_board() {
     for ((x=1; x<WIDTH-1; x++)); do printf "${CHAR_BORDER_H}"; done
     printf "${CHAR_CORNER_BR}${C_RESET}"
 
-    # Draw stats and controls info
+    # Controls and score bar
     move_to 0 $HEIGHT
-    printf " ${C_SCORE}Score: ${C_BOLD}%d${C_RESET} | ${C_SCORE}Record: ${C_BOLD}%d${C_RESET} | Controls: ${C_DIM}WASD / Arrows / Q: Quit / Space: Pause${C_RESET}\n" "$score" "$HIGHSCORE"
+    printf " ${C_SCORE}Score: ${C_BOLD}%-4d${C_RESET} | ${C_SCORE}Record: ${C_BOLD}%-4d${C_RESET} | ${C_DIM}WASD/Arrows | P: Pause | Q: Quit${C_RESET}" "$score" "$HIGHSCORE"
+}
+
+spawn_food() {
+    local valid=0
+    while [[ $valid -eq 0 ]]; do
+        food_x=$((RANDOM % (WIDTH - 2) + 1))
+        food_y=$((RANDOM % (HEIGHT - 2) + 1))
+        valid=1
+        for ((i=0; i<snake_len; i++)); do
+            if [[ ${snake_x[i]} -eq $food_x && ${snake_y[i]} -eq $food_y ]]; then
+                valid=0
+                break
+            fi
+        done
+    done
 }
 
 render_game() {
@@ -139,36 +142,39 @@ render_game() {
 
 read_input() {
     local key=""
-    # Non-blocking read
+    local extra=""
+
+    # Read with current tick timeout
     read -rsn1 -t "$speed" key
 
     if [[ "$key" == $'\e' ]]; then
-        # Read the rest of escape sequence if any
-        read -rsn2 -t 0.001 extra
+        read -rsn2 -t 0.05 extra
         key+="$extra"
     fi
 
     case "$key" in
         # Up
-        [wWцЦ]|$'\e[A')
-            if [[ $dir_y -ne 1 ]]; then dir_x=0; dir_y=-1; fi ;;
+        [wWцЦ]|$'\e[A'|$'\eOA')
+            if [[ $dir_y -ne 1 ]]; then dir_x=0; dir_y=-1; started=1; fi ;;
         # Down
-        [sSыЫ]|$'\e[B')
-            if [[ $dir_y -ne -1 ]]; then dir_x=0; dir_y=1; fi ;;
+        [sSыЫ]|$'\e[B'|$'\eOB')
+            if [[ $dir_y -ne -1 ]]; then dir_x=0; dir_y=1; started=1; fi ;;
         # Left
-        [aAфФ]|$'\e[D')
-            if [[ $dir_x -ne 1 ]]; then dir_x=-1; dir_y=0; fi ;;
+        [aAфФ]|$'\e[D'|$'\eOD')
+            if [[ $dir_x -ne 1 ]]; then dir_x=-1; dir_y=0; started=1; fi ;;
         # Right
-        [dDвВ]|$'\e[C')
-            if [[ $dir_x -ne -1 ]]; then dir_x=1; dir_y=0; fi ;;
+        [dDвВ]|$'\e[C'|$'\eOC')
+            if [[ $dir_x -ne -1 ]]; then dir_x=1; dir_y=0; started=1; fi ;;
         # Pause
         " "|[pPзЗ])
-            paused=$((1 - paused))
-            if [[ $paused -eq 1 ]]; then
-                move_to $((WIDTH / 2 - 4)) $((HEIGHT / 2))
-                printf "${C_MSG}${C_BOLD}[ PAUSED ]${C_RESET}"
-            else
-                draw_board
+            if [[ $started -eq 1 ]]; then
+                paused=$((1 - paused))
+                if [[ $paused -eq 1 ]]; then
+                    move_to $((WIDTH / 2 - 5)) $((HEIGHT / 2))
+                    printf "${C_MSG}${C_BOLD}[ PAUSED ]${C_RESET}"
+                else
+                    draw_board
+                fi
             fi
             ;;
         # Quit
@@ -178,11 +184,10 @@ read_input() {
 }
 
 update_state() {
-    if [[ $paused -eq 1 ]]; then
+    if [[ $started -eq 0 || $paused -eq 1 ]]; then
         return
     fi
 
-    # Calculate new head
     local new_x=$((snake_x[0] + dir_x))
     local new_y=$((snake_y[0] + dir_y))
 
@@ -200,24 +205,24 @@ update_state() {
         fi
     done
 
-    # Check food eaten
+    # Food eaten?
     if [[ $new_x -eq $food_x && $new_y -eq $food_y ]]; then
         score=$((score + 10))
         snake_len=$((snake_len + 1))
-        # Increase speed slightly every 50 points
-        if (( score % 50 == 0 )) && (( $(echo "$speed > 0.04" | bc -l 2>/dev/null || echo 0) )); then
-            speed=$(awk "BEGIN {print $speed - 0.008}")
+        # Speed up slightly every 40 points (min 0.05s)
+        if (( score % 40 == 0 )); then
+            speed=$(awk "BEGIN {s=$speed - 0.007; if (s < 0.05) s=0.05; print s}")
         fi
         spawn_food
     else
-        # Clear tail on screen
+        # Erase old tail
         local tail_x=${snake_x[snake_len-1]}
         local tail_y=${snake_y[snake_len-1]}
         move_to "$tail_x" "$tail_y"
         printf " "
     fi
 
-    # Shift snake body
+    # Move body
     for ((i=snake_len-1; i>0; i--)); do
         snake_x[i]=${snake_x[i-1]}
         snake_y[i]=${snake_y[i-1]}
@@ -226,45 +231,67 @@ update_state() {
     snake_x[0]=$new_x
     snake_y[0]=$new_y
 
-    # Update score label
+    # Update score numbers
     move_to 8 $HEIGHT
-    printf "${C_SCORE}${C_BOLD}%d${C_RESET}" "$score"
+    printf "${C_SCORE}${C_BOLD}%-4d${C_RESET}" "$score"
 }
 
-# Main loop
-main() {
-    # Check minimum terminal size
-    local cols=$(tput cols)
-    local lines=$(tput lines)
-    if [[ $cols -lt $WIDTH || $lines -lt $((HEIGHT + 2)) ]]; then
-        echo "Terminal too small! Please resize to at least ${WIDTH}x$((HEIGHT + 2))."
-        exit 1
-    fi
+init_game() {
+    calc_dimensions
+    score=0
+    speed=0.10
+    paused=0
+    game_over=0
+    started=0
 
+    local start_x=$((WIDTH / 2))
+    local start_y=$((HEIGHT / 2))
+
+    snake_x=($start_x $((start_x - 1)) $((start_x - 2)))
+    snake_y=($start_y $start_y $start_y)
+    snake_len=3
+
+    dir_x=1
+    dir_y=0
+
+    spawn_food
+    draw_board
+
+    # Show start hint
+    move_to $((WIDTH / 2 - 10)) $((HEIGHT / 2 - 2))
+    printf "${C_INFO}${C_BOLD}Press WASD to Start!${C_RESET}"
+}
+
+main() {
     while true; do
         init_game
         while [[ $game_over -eq 0 ]]; do
             render_game
             read_input
             update_state
+            # Clear start hint once moved
+            if [[ $started -eq 1 && $snake_len -eq 3 && $score -eq 0 ]]; then
+                move_to $((WIDTH / 2 - 10)) $((HEIGHT / 2 - 2))
+                printf "                    "
+            fi
         done
 
-        # Handle highscore
+        # Save highscore
         if [[ $score -gt $HIGHSCORE ]]; then
             HIGHSCORE=$score
             echo "$HIGHSCORE" > "$SCORE_FILE"
         fi
 
         # Game Over Screen
-        move_to $((WIDTH / 2 - 6)) $((HEIGHT / 2 - 1))
-        printf "${C_FOOD}${C_BOLD}╔════════════╗${C_RESET}"
-        move_to $((WIDTH / 2 - 6)) $((HEIGHT / 2))
-        printf "${C_FOOD}${C_BOLD}║ GAME OVER! ║${C_RESET}"
-        move_to $((WIDTH / 2 - 6)) $((HEIGHT / 2 + 1))
-        printf "${C_FOOD}${C_BOLD}╚════════════╝${C_RESET}"
+        move_to $((WIDTH / 2 - 7)) $((HEIGHT / 2 - 1))
+        printf "${C_FOOD}${C_BOLD}╔══════════════╗${C_RESET}"
+        move_to $((WIDTH / 2 - 7)) $((HEIGHT / 2))
+        printf "${C_FOOD}${C_BOLD}║  GAME OVER!  ║${C_RESET}"
+        move_to $((WIDTH / 2 - 7)) $((HEIGHT / 2 + 1))
+        printf "${C_FOOD}${C_BOLD}╚══════════════╝${C_RESET}"
 
         move_to $((WIDTH / 2 - 11)) $((HEIGHT / 2 + 3))
-        printf "${C_SCORE}Press [R] to Restart, [Q] to Quit${C_RESET}"
+        printf "${C_SCORE}Press [R] to Retry, [Q] to Quit${C_RESET}"
 
         while true; do
             read -rsn1 key
