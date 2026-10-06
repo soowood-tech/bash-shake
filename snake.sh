@@ -1,50 +1,53 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  BASH SNAKE - Classic Snake Game written in pure Bash
+#  BASH SNAKE - Classic Snake Game with AI Auto-Play in pure Bash
 # ==============================================================================
 
-# ANSI Colors
+# ANSI Color Palette
 C_RESET="\033[0m"
 C_BOLD="\033[1m"
 C_DIM="\033[2m"
-C_BORDER="\033[38;5;39m"    # Cyan
-C_HEAD="\033[38;5;46m"      # Bright green
-C_BODY="\033[38;5;34m"      # Forest green
-C_FOOD="\033[38;5;196m"     # Bright red
-C_SCORE="\033[38;5;220m"    # Gold
-C_MSG="\033[38;5;213m"      # Pink
-C_INFO="\033[38;5;51m"      # Cyan info
 
-# Symbols
+C_BORDER="\033[38;5;75m"      # Soft Sky Blue
+C_TITLE="\033[38;5;153m"     # Light Blue
+C_HEAD="\033[38;5;82m"       # Vibrant Green
+C_BODY="\033[38;5;35m"       # Snake Body Green
+C_FOOD="\033[38;5;196m"      # Bright Apple Red
+C_SCORE="\033[38;5;221m"     # Warm Gold
+C_BOT_ON="\033[38;5;208m"    # Orange (AI Active)
+C_BOT_OFF="\033[38;5;244m"   # Dim Gray
+C_MSG="\033[38;5;213m"       # Soft Magenta
+
+# Unicode Characters
 CHAR_HEAD="◉"
-CHAR_BODY="○"
+CHAR_BODY="●"
 CHAR_FOOD="★"
-CHAR_BORDER_H="─"
-CHAR_BORDER_V="│"
-CHAR_CORNER_TL="┌"
-CHAR_CORNER_TR="┐"
-CHAR_CORNER_BL="└"
-CHAR_CORNER_BR="┘"
+CHAR_BORDER_H="═"
+CHAR_BORDER_V="║"
+CHAR_CORNER_TL="╔"
+CHAR_CORNER_TR="╗"
+CHAR_CORNER_BL="╚"
+CHAR_CORNER_BR="╝"
 
-# Score file
+# Score storage
 SCORE_FILE="$HOME/.bash_snake_highscore"
 HIGHSCORE=0
 if [[ -f "$SCORE_FILE" ]]; then
     HIGHSCORE=$(cat "$SCORE_FILE" 2>/dev/null || echo 0)
 fi
 
-# Cleanup and restore terminal on exit
 cleanup() {
-    tput cnorm 2>/dev/null      # Show cursor
-    stty echo 2>/dev/null       # Restore echo
-    tput rmcup 2>/dev/null      # Restore screen
+    tput cnorm 2>/dev/null
+    stty echo 2>/dev/null
+    tput rmcup 2>/dev/null
     printf "${C_RESET}\n"
     exit 0
 }
+trap cleanup SIGINT SIGTERM EXIT
 
+# Calculate board size & center offsets
 calc_dimensions() {
-    local term_cols
-    local term_lines
+    local term_cols term_lines
     term_cols=$(tput cols 2>/dev/null || echo 80)
     term_lines=$(tput lines 2>/dev/null || echo 24)
 
@@ -53,41 +56,48 @@ calc_dimensions() {
         exit 1
     fi
 
-    # Width: fit nicely (max 50, but at least leave 2 margin cols)
-    if (( term_cols > 54 )); then
-        WIDTH=50
+    # Width: 46 columns (fits comfortably on small & split screens)
+    if (( term_cols > 50 )); then
+        WIDTH=46
     else
         WIDTH=$(( term_cols - 4 ))
     fi
 
-    # Height: leave 3 lines for status and margins
-    HEIGHT=$(( term_lines - 3 ))
-    if (( HEIGHT > 22 )); then
-        HEIGHT=20
+    # Height: 15-18 rows
+    if (( term_lines > 20 )); then
+        HEIGHT=17
+    else
+        HEIGHT=$(( term_lines - 4 ))
     fi
+
+    # Horizontal center offset
+    OFFSET_X=$(( (term_cols - WIDTH) / 2 ))
+    if (( OFFSET_X < 0 )); then OFFSET_X=0; fi
+
+    # Vertical offset
+    OFFSET_Y=1
 }
 
-calc_dimensions
-
-# Catch exit signals
-trap cleanup SIGINT SIGTERM EXIT
-
-# Enter full screen alternate buffer
-tput smcup 2>/dev/null
-tput civis 2>/dev/null
-stty -echo 2>/dev/null
-
-# Move cursor helper: row (Y), col (X)
+# Move cursor taking into account centered offsets
 move_to() {
-    tput cup "$2" "$1"
+    local x=$(( $1 + OFFSET_X ))
+    local y=$(( $2 + OFFSET_Y ))
+    tput cup "$y" "$x"
 }
 
 draw_board() {
     clear
-    # Top border
+
+    # Top border with title
     move_to 0 0
     printf "${C_BORDER}${CHAR_CORNER_TL}"
-    for ((x=1; x<WIDTH-1; x++)); do printf "${CHAR_BORDER_H}"; done
+    local title=" 🐍 BASH SNAKE "
+    local title_len=${#title}
+    local side_len=$(( (WIDTH - 2 - title_len) / 2 ))
+
+    for ((x=0; x<side_len; x++)); do printf "${CHAR_BORDER_H}"; done
+    printf "${C_TITLE}${C_BOLD}%s${C_BORDER}" "$title"
+    for ((x=0; x<WIDTH - 2 - side_len - title_len; x++)); do printf "${CHAR_BORDER_H}"; done
     printf "${CHAR_CORNER_TR}${C_RESET}"
 
     # Side borders
@@ -104,9 +114,22 @@ draw_board() {
     for ((x=1; x<WIDTH-1; x++)); do printf "${CHAR_BORDER_H}"; done
     printf "${CHAR_CORNER_BR}${C_RESET}"
 
-    # Controls and score bar
-    move_to 0 $HEIGHT
-    printf " ${C_SCORE}Score: ${C_BOLD}%-4d${C_RESET} | ${C_SCORE}Record: ${C_BOLD}%-4d${C_RESET} | ${C_DIM}WASD/Arrows | P: Pause | Q: Quit${C_RESET}" "$score" "$HIGHSCORE"
+    draw_ui
+}
+
+draw_ui() {
+    # Top info line
+    move_to 0 $((HEIGHT))
+    local mode_str="${C_BOT_OFF}[AUTO: OFF]${C_RESET}"
+    if [[ $auto_mode -eq 1 ]]; then
+        mode_str="${C_BOT_ON}${C_BOLD}[AUTO: ON]${C_RESET}"
+    fi
+
+    printf " ${C_SCORE}Score: ${C_BOLD}%-4d${C_RESET} │ ${C_SCORE}Record: ${C_BOLD}%-4d${C_RESET} │ %b" "$score" "$HIGHSCORE" "$mode_str"
+
+    # Help footer
+    move_to 0 $((HEIGHT + 1))
+    printf " ${C_DIM}WASD/Arrows | TAB: Auto-Play | P: Pause | Q: Quit${C_RESET}"
 }
 
 spawn_food() {
@@ -140,31 +163,139 @@ render_game() {
     printf "${C_HEAD}${CHAR_HEAD}${C_RESET}"
 }
 
+# AI decision algorithm (Auto-Play)
+ai_choose_direction() {
+    local head_x=${snake_x[0]}
+    local head_y=${snake_y[0]}
+
+    # Candidates: Up, Down, Left, Right
+    local dirs_dx=(0 0 -1 1)
+    local dirs_dy=(-1 1 0 0)
+    local best_dx=$dir_x
+    local best_dy=$dir_y
+    local best_dist=99999
+    local found_safe=0
+
+    # Test all 4 directions
+    for d in 0 1 2 3; do
+        local test_dx=${dirs_dx[d]}
+        local test_dy=${dirs_dy[d]}
+
+        # Cannot reverse into itself
+        if [[ $test_dx -eq $(( -dir_x )) && $test_dy -eq $(( -dir_y )) && $snake_len -gt 1 ]]; then
+            continue
+        fi
+
+        local nx=$((head_x + test_dx))
+        local ny=$((head_y + test_dy))
+
+        # Check wall collision
+        if [[ $nx -le 0 || $nx -ge $((WIDTH - 1)) || $ny -le 0 || $ny -ge $((HEIGHT - 1)) ]]; then
+            continue
+        fi
+
+        # Check snake body collision
+        local hits_body=0
+        for ((i=0; i<snake_len-1; i++)); do
+            if [[ ${snake_x[i]} -eq $nx && ${snake_y[i]} -eq $ny ]]; then
+                hits_body=1
+                break
+            fi
+        done
+        if [[ $hits_body -eq 1 ]]; then
+            continue
+        fi
+
+        # Lookahead 1 step: does this cell have at least one valid continuation?
+        local valid_future=0
+        for ld in 0 1 2 3; do
+            local lnx=$((nx + dirs_dx[ld]))
+            local lny=$((ny + dirs_dy[ld]))
+            if [[ $lnx -gt 0 && $lnx -lt $((WIDTH - 1)) && $lny -gt 0 && $lny -lt $((HEIGHT - 1)) ]]; then
+                local lhits=0
+                for ((i=0; i<snake_len-2; i++)); do
+                    if [[ ${snake_x[i]} -eq $lnx && ${snake_y[i]} -eq $lny ]]; then
+                        lhits=1
+                        break
+                    fi
+                done
+                if [[ $lhits -eq 0 ]]; then
+                    valid_future=1
+                    break
+                fi
+            fi
+        done
+
+        # Manhattan distance to food
+        local dist_x=$((nx - food_x))
+        if (( dist_x < 0 )); then dist_x=$(( -dist_x )); fi
+        local dist_y=$((ny - food_y))
+        if (( dist_y < 0 )); then dist_y=$(( -dist_y )); fi
+        local dist=$((dist_x + dist_y))
+
+        # Penalty if it leads to a dead end
+        if [[ $valid_future -eq 0 && $snake_len -gt 4 ]]; then
+            dist=$((dist + 100))
+        fi
+
+        if [[ $dist -lt $best_dist ]]; then
+            best_dist=$dist
+            best_dx=$test_dx
+            best_dy=$test_dy
+            found_safe=1
+        fi
+    done
+
+    if [[ $found_safe -eq 1 ]]; then
+        dir_x=$best_dx
+        dir_y=$best_dy
+    fi
+}
+
 read_input() {
     local key=""
     local extra=""
 
-    # Read with current tick timeout
-    read -rsn1 -t "$speed" key
+    # Read input with timeout = speed (IFS= ensures spaces and tabs are preserved)
+    IFS= read -rsn1 -t "$speed" key
 
     if [[ "$key" == $'\e' ]]; then
-        read -rsn2 -t 0.05 extra
+        IFS= read -rsn2 -t 0.05 extra
         key+="$extra"
     fi
 
     case "$key" in
         # Up
         [wWцЦ]|$'\e[A'|$'\eOA')
-            if [[ $dir_y -ne 1 ]]; then dir_x=0; dir_y=-1; started=1; fi ;;
+            auto_mode=0
+            if [[ $dir_y -ne 1 ]]; then dir_x=0; dir_y=-1; started=1; fi
+            draw_ui ;;
         # Down
         [sSыЫ]|$'\e[B'|$'\eOB')
-            if [[ $dir_y -ne -1 ]]; then dir_x=0; dir_y=1; started=1; fi ;;
+            auto_mode=0
+            if [[ $dir_y -ne -1 ]]; then dir_x=0; dir_y=1; started=1; fi
+            draw_ui ;;
         # Left
         [aAфФ]|$'\e[D'|$'\eOD')
-            if [[ $dir_x -ne 1 ]]; then dir_x=-1; dir_y=0; started=1; fi ;;
+            auto_mode=0
+            if [[ $dir_x -ne 1 ]]; then dir_x=-1; dir_y=0; started=1; fi
+            draw_ui ;;
         # Right
         [dDвВ]|$'\e[C'|$'\eOC')
-            if [[ $dir_x -ne -1 ]]; then dir_x=1; dir_y=0; started=1; fi ;;
+            auto_mode=0
+            if [[ $dir_x -ne -1 ]]; then dir_x=1; dir_y=0; started=1; fi
+            draw_ui ;;
+        # Toggle Auto-Play (TAB, T, or B for Bot)
+        $'\t'|[tTеЕ]|[bBиИ])
+            auto_mode=$((1 - auto_mode))
+            started=1
+            draw_ui
+            ;;
+        # Speed adjustment (+ / -)
+        "+"|"=")
+            speed=$(awk "BEGIN {s=$speed - 0.02; if (s < 0.05) s=0.05; print s}") ;;
+        "-"|"_")
+            speed=$(awk "BEGIN {s=$speed + 0.02; if (s > 0.35) s=0.35; print s}") ;;
         # Pause
         " "|[pPзЗ])
             if [[ $started -eq 1 ]]; then
@@ -188,6 +319,11 @@ update_state() {
         return
     fi
 
+    # If AI auto-play is enabled, calculate next move
+    if [[ $auto_mode -eq 1 ]]; then
+        ai_choose_direction
+    fi
+
     local new_x=$((snake_x[0] + dir_x))
     local new_y=$((snake_y[0] + dir_y))
 
@@ -205,24 +341,21 @@ update_state() {
         fi
     done
 
-    # Food eaten?
+    # Food eaten
     if [[ $new_x -eq $food_x && $new_y -eq $food_y ]]; then
         score=$((score + 10))
         snake_len=$((snake_len + 1))
-        # Speed up slightly every 40 points (min 0.05s)
-        if (( score % 40 == 0 )); then
-            speed=$(awk "BEGIN {s=$speed - 0.007; if (s < 0.05) s=0.05; print s}")
-        fi
         spawn_food
+        draw_ui
     else
-        # Erase old tail
+        # Clear old tail
         local tail_x=${snake_x[snake_len-1]}
         local tail_y=${snake_y[snake_len-1]}
         move_to "$tail_x" "$tail_y"
         printf " "
     fi
 
-    # Move body
+    # Advance body
     for ((i=snake_len-1; i>0; i--)); do
         snake_x[i]=${snake_x[i-1]}
         snake_y[i]=${snake_y[i-1]}
@@ -230,19 +363,17 @@ update_state() {
 
     snake_x[0]=$new_x
     snake_y[0]=$new_y
-
-    # Update score numbers
-    move_to 8 $HEIGHT
-    printf "${C_SCORE}${C_BOLD}%-4d${C_RESET}" "$score"
 }
 
 init_game() {
     calc_dimensions
     score=0
-    speed=0.10
+    # Balanced comfortable default speed: 0.16s
+    speed=0.16
     paused=0
     game_over=0
     started=0
+    auto_mode=0
 
     local start_x=$((WIDTH / 2))
     local start_y=$((HEIGHT / 2))
@@ -257,26 +388,32 @@ init_game() {
     spawn_food
     draw_board
 
-    # Show start hint
-    move_to $((WIDTH / 2 - 10)) $((HEIGHT / 2 - 2))
-    printf "${C_INFO}${C_BOLD}Press WASD to Start!${C_RESET}"
+    # Start hint
+    move_to $((WIDTH / 2 - 13)) $((HEIGHT / 2 - 2))
+    printf "${C_TITLE}${C_BOLD}Press WASD or TAB (Auto)${C_RESET}"
 }
 
 main() {
+    # Enter full screen alternate buffer
+    tput smcup 2>/dev/null
+    tput civis 2>/dev/null
+    stty -echo 2>/dev/null
+
     while true; do
         init_game
         while [[ $game_over -eq 0 ]]; do
             render_game
             read_input
             update_state
-            # Clear start hint once moved
+
+            # Clear start hint
             if [[ $started -eq 1 && $snake_len -eq 3 && $score -eq 0 ]]; then
-                move_to $((WIDTH / 2 - 10)) $((HEIGHT / 2 - 2))
-                printf "                    "
+                move_to $((WIDTH / 2 - 13)) $((HEIGHT / 2 - 2))
+                printf "                           "
             fi
         done
 
-        # Save highscore
+        # Save high score
         if [[ $score -gt $HIGHSCORE ]]; then
             HIGHSCORE=$score
             echo "$HIGHSCORE" > "$SCORE_FILE"
@@ -294,7 +431,7 @@ main() {
         printf "${C_SCORE}Press [R] to Retry, [Q] to Quit${C_RESET}"
 
         while true; do
-            read -rsn1 key
+            IFS= read -rsn1 key
             case "$key" in
                 [rRкК]) break ;;
                 [qQйЙ]) cleanup ;;

@@ -1,6 +1,6 @@
 # 🐍 Bash Snake
 
-> A clean, lightweight, and responsive classic Snake game written entirely in **pure Bash** with zero external dependencies.
+> A clean, lightweight, and responsive classic Snake game with an **intelligent AI Auto-Play mode**, written in **pure Bash** with zero external dependencies.
 
 ![Bash](https://img.shields.io/badge/Language-Bash-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-blue?style=flat-square)
@@ -10,12 +10,13 @@
 
 ## ✨ Features
 
-- ⚡ **Zero dependencies:** Works out-of-the-box on any POSIX terminal with Bash 4+.
-- 🎮 **Dual Controls:** Supports both `WASD` and **Arrow Keys** (plus Russian keyboard layout `ЦФЫВ`).
-- 🎨 **Modern ANSI visuals:** Clean UTF-8 symbols, colored snake, and styled borders.
-- 🏆 **High Score persistence:** Automatically saves and tracks your best score in `~/.bash_snake_highscore`.
-- ⏸️ **Pause & Restart:** Instant pause/resume without resetting game state.
-- 🚀 **Progressive Difficulty:** Game speed increases slightly as you score more points.
+- ⚡ **Zero dependencies:** Works out-of-the-box in any standard terminal (Bash 4+).
+- 🤖 **AI Auto-Play Mode:** Press `Tab` or `T` anytime to watch the smart pathfinding bot play automatically!
+- 🎨 **Adaptive Centered UI:** Automatically scales and centers within your terminal window (fits small screens down to 10 rows).
+- 🎮 **Dual Controls:** Full support for `WASD`, **Arrow Keys**, and Russian keyboard layout (`ЦФЫВ`).
+- ⏱️ **Adjustable Speed:** Smooth, comfortable default pace, with on-the-fly speed adjustments (`+` / `-`).
+- 🏆 **High Score Persistence:** Automatically records and saves your highest score in `~/.bash_snake_highscore`.
+- ⏸️ **Pause & Clean Screen:** Restores terminal state cleanly upon exit (`tput smcup/rmcup`).
 
 ---
 
@@ -27,6 +28,8 @@
 | **Move Down** | `S` | `↓` | `Ы` |
 | **Move Left** | `A` | `←` | `Ф` |
 | **Move Right** | `D` | `→` | `В` |
+| **Toggle Auto-Play (AI)** | `Tab` | `T` / `B` | `Е` / `И` |
+| **Adjust Speed** | `+` (faster) | `-` (slower) | `=` / `_` |
 | **Pause / Resume** | `Space` | `P` | `З` |
 | **Restart (Game Over)** | `R` | - | `К` |
 | **Quit Game** | `Q` | - | `Й` |
@@ -35,34 +38,21 @@
 
 ## 🚀 Quick Start
 
-### 1. Clone the repository
+### 1. Run directly
 ```bash
-git clone https://github.com/<your-username>/bash-snake.git
-cd bash-snake
-```
-
-### 2. Run the game
-```bash
+cd ~/bash-snake
 ./snake.sh
 ```
 
-*(Optional) Install globally into your `~/.local/bin`*:
+*(Optional) Symlink to your `~/.local/bin` to run from anywhere:*
 ```bash
 mkdir -p ~/.local/bin
-ln -s "$(pwd)/snake.sh" ~/.local/bin/snake
+ln -sf "$(pwd)/snake.sh" ~/.local/bin/snake
 ```
-Now you can simply run `snake` from any terminal window!
-
----
-
-## 📋 Requirements
-
-- Bash `4.0+`
-- Terminal size of at least `40x22` characters
-- UTF-8 font support (standard in Kitty, Alacritty, Foot, Konsole, etc.)
+Now simply type `snake` in any terminal!
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - feel free to customize and share!
+This project is licensed under the MIT License.
